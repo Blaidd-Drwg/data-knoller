@@ -1,28 +1,29 @@
 package de.hpi.isg.dataprep.components;
 
+import de.hpi.isg.dataprep.ExecutionContext;
 import de.hpi.isg.dataprep.context.DataContext;
 import de.hpi.isg.dataprep.exceptions.PipelineSyntaxErrorException;
-import de.hpi.isg.dataprep.metadata.*;
+import de.hpi.isg.dataprep.initializer.ManualMetadataInitializer;
 import de.hpi.isg.dataprep.model.dialects.FileLoadDialect;
+import de.hpi.isg.dataprep.model.error.PropertyError;
+import de.hpi.isg.dataprep.model.error.RecordError;
+import de.hpi.isg.dataprep.model.metadata.MetadataInitializer;
 import de.hpi.isg.dataprep.model.repository.ErrorRepository;
 import de.hpi.isg.dataprep.model.repository.MetadataRepository;
-import de.hpi.isg.dataprep.model.repository.ProvenanceRepository;
+import de.hpi.isg.dataprep.model.target.errorlog.ErrorLog;
 import de.hpi.isg.dataprep.model.target.errorlog.PipelineErrorLog;
+import de.hpi.isg.dataprep.model.target.errorlog.PreparationErrorLog;
 import de.hpi.isg.dataprep.model.target.objects.Metadata;
-import de.hpi.isg.dataprep.model.target.objects.TableMetadata;
-import de.hpi.isg.dataprep.model.target.schema.Attribute;
 import de.hpi.isg.dataprep.model.target.schema.SchemaMapping;
 import de.hpi.isg.dataprep.model.target.system.AbstractPipeline;
 import de.hpi.isg.dataprep.model.target.system.AbstractPreparation;
 import de.hpi.isg.dataprep.model.target.system.AbstractPreparator;
-import de.hpi.isg.dataprep.utils.UpdateUtils;
 import de.hpi.isg.dataprep.write.FlatFileWriter;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
-import org.apache.spark.sql.types.DataType;
-import org.apache.spark.sql.types.StructType;
 
 import java.util.*;
+import java.util.stream.Collectors;
 
 /**
  * @author Lan Jiang
@@ -38,11 +39,10 @@ public class Pipeline implements AbstractPipeline {
      */
     private final static int MAX_CARDINALITY = Integer.MIN_VALUE;
 
-    private MetadataRepository metadataRepository;
-    private ProvenanceRepository provenanceRepository;
-    private ErrorRepository errorRepository;
+    private MetadataRepository metadataRepository = new MetadataRepository();
+    private ErrorRepository errorRepository = new ErrorRepository();
 
-    private List<AbstractPreparation> preparations;
+    private List<AbstractPreparation> preparations = new LinkedList<>();
 
     private DecisionEngine decisionEngine = DecisionEngine.getInstance();
 
@@ -56,27 +56,16 @@ public class Pipeline implements AbstractPipeline {
      * The raw data contains a set of {@link Row} instances. Each instance represent a line in a tabular data without schema definition,
      * i.e., each instance has only one attribute that represent the whole line, including content and utility characters.
      */
-    private Dataset<Row> rawData;
+    private Dataset<Row> dataset;
 
     private FileLoadDialect dialect;
-    private String datasetName;
 
-    private Pipeline() {
-        this.metadataRepository = new MetadataRepository();
-        this.provenanceRepository = new ProvenanceRepository();
-        this.errorRepository = new ErrorRepository();
-        this.preparations = new LinkedList<>();
-
-//        this.schemaMapping = new SimpleSchemaMapping(null);
+    public Pipeline(Dataset<Row> dataset) {
+        this.dataset = dataset;
     }
 
-    public Pipeline(Dataset<Row> rawData) {
-        this();
-        this.rawData = rawData;
-    }
-
-    public Pipeline(String name, Dataset<Row> rawData) {
-        this(rawData);
+    public Pipeline(String name, Dataset<Row> dataset) {
+        this(dataset);
         this.name = name;
     }
 
@@ -85,8 +74,6 @@ public class Pipeline implements AbstractPipeline {
         this.dialect = dataContext.getDialect();
         this.schemaMapping = dataContext.getSchemaMapping();
         this.targetMetadata = dataContext.getTargetMetadata();
-
-        this.datasetName = dataContext.getDialect().getTableName();
 
         // initialize and configure the pipeline.
         initPipeline();
@@ -102,8 +89,6 @@ public class Pipeline implements AbstractPipeline {
     public void addPreparation(AbstractPreparation preparation) {
         preparation.setPipeline(this);
         preparation.setPosition(index++);
-
-//        preparation.getAbstractPreparator().buildMetadataSetup();
         this.preparations.add(preparation);
     }
 
@@ -150,49 +135,56 @@ public class Pipeline implements AbstractPipeline {
 
         // execute the pipeline
         for (AbstractPreparation preparation : preparations) {
-            preparation.getAbstractPreparator().execute();
+            executePreparation(preparation);
         }
     }
 
+    private void recordProvenance() {
+
+    }
+
+    /**
+     * Call this method whenever an error occurs during the preparator execution in order to
+     * record an error log.
+     */
+    private void recordErrorLog(ExecutionContext executionContext, AbstractPreparation preparation) {
+        List<ErrorLog> errorLogs = executionContext.errorsAccumulator().value().stream()
+                .map(error -> {
+                    ErrorLog errorLog = null;
+                    switch (error.getErrorLevel()) {
+                        case RECORD: {
+                            RecordError pair = (RecordError) error;
+                            String value = pair.getErrRecord();
+                            Throwable exception = pair.getError();
+                            errorLog = new PreparationErrorLog(preparation, value, exception);
+                            break;
+                        }
+                        case PROPERTY: {
+                            PropertyError pair = (PropertyError) error;
+                            String value = pair.getProperty();
+                            Throwable throwable = pair.getThrowable();
+                            errorLog = new PreparationErrorLog(preparation, value, throwable);
+                            break;
+                        }
+                        case DATASET: {
+                            break;
+                        }
+                        default: {
+                            break;
+                        }
+                    }
+                    return errorLog;
+                }).collect(Collectors.toList());
+        this.errorRepository.addErrorLogs(errorLogs);
+    }
+
+
     @Override
     public void initMetadataRepository() {
-        CSVSourcePath csvPath = new CSVSourcePath(dialect.getUrl());
-        UsedEncoding usedEncoding = new UsedEncoding(dialect.getEncoding());
-
-        Delimiter delimiter = new Delimiter(dialect.getDelimiter(), new TableMetadata(dialect.getTableName()));
-        QuoteCharacter quoteCharacter = new QuoteCharacter(dialect.getQuoteChar(), new TableMetadata(dialect.getTableName()));
-        EscapeCharacter escapeCharacter = new EscapeCharacter(dialect.getEscapeChar(), new TableMetadata(dialect.getTableName()));
-        HeaderExistence headerExistence = new HeaderExistence(dialect.getHasHeader().equals("true"), new TableMetadata(dialect.getTableName()));
-
-        List<Metadata> initMetadata = new ArrayList<>();
-        initMetadata.add(delimiter);
-        initMetadata.add(quoteCharacter);
-        initMetadata.add(escapeCharacter);
-        initMetadata.add(headerExistence);
-        initMetadata.add(csvPath);
-        initMetadata.add(usedEncoding);
-
-        StructType structType = this.rawData.schema();
-//        Arrays.stream(structType.fields()).forEach(field -> {
-//            DataType dataType = field.dataType();
-//            String fieldName = field.name();
-//            PropertyDataType propertyDataType = new PropertyDataType(fieldName, de.hpi.isg.dataprep.util.DataType.getTypeFromSparkType(dataType));
-//            initMetadata.add(propertyDataType);
-//        });
-
-        List<Attribute> attributes = new LinkedList<>();
-        Arrays.stream(structType.fields()).forEach(field -> {
-            DataType dataType = field.dataType();
-            String fieldName = field.name();
-            PropertyDataType propertyDataType = new PropertyDataType(fieldName, de.hpi.isg.dataprep.util.DataType.getTypeFromSparkType(dataType));
-            Attribute attribute = new Attribute(field);
-            attributes.add(attribute);
-            initMetadata.add(propertyDataType);
-        });
-        Schemata schemata = new Schemata("table", attributes);
-        initMetadata.add(schemata);
-
-        this.metadataRepository.updateMetadata(initMetadata);
+        // Delegate this job to a MetadataInitializer.
+        MetadataInitializer metadataInitializer = new ManualMetadataInitializer(getDialect(), getDataset());
+        metadataInitializer.initializeMetadataRepository();
+        metadataRepository = metadataInitializer.getMetadataRepository();
     }
 
     @Override
@@ -224,7 +216,7 @@ public class Pipeline implements AbstractPipeline {
         preparation.setPipeline(this);
         preparation.setPosition(index++);
         preparations.add(preparation);
-        executeRecommendedPreparation(preparation);
+        executePreparation(preparation);
         return true;
     }
 
@@ -232,17 +224,20 @@ public class Pipeline implements AbstractPipeline {
      * Execute the recommended preparator that is added into this pipeline. Followed by this execution, data, metadata
      * and other dynamic information must be updated.
      */
-    private void executeRecommendedPreparation(AbstractPreparation preparation) {
+    private void executePreparation(AbstractPreparation preparation) {
+        ExecutionContext executionContext;
         //execute the added preparation
         try {
-            preparation.getAbstractPreparator().execute();
+            executionContext = preparation.getAbstractPreparator().execute(this.dataset);
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
 
-        // update the schemaMapping and target metadata
-        UpdateUtils.updateSchemaMapping(schemaMapping, preparation.getExecutionContext());
-        UpdateUtils.updateMetadata(this, preparation.getAbstractPreparator());
+        recordErrorLog(executionContext, preparation);
+        setDataset(executionContext.newDataFrame());
+//        UpdateUtils.updateMetadata(this, preparation.getAbstractPreparator());
+        this.updateMetadataRepository(preparation.getAbstractPreparator().getUpdateMetadata());
+        recordProvenance();
     }
 
     @Override
@@ -261,18 +256,13 @@ public class Pipeline implements AbstractPipeline {
     }
 
     @Override
-    public ProvenanceRepository getProvenanceRepository() {
-        return provenanceRepository;
+    public Dataset<Row> getDataset() {
+        return dataset;
     }
 
     @Override
-    public Dataset<Row> getRawData() {
-        return rawData;
-    }
-
-    @Override
-    public void setRawData(Dataset<Row> rawData) {
-        this.rawData = rawData;
+    public void setDataset(Dataset<Row> dataset) {
+        this.dataset = dataset;
     }
 
     @Override
@@ -283,11 +273,6 @@ public class Pipeline implements AbstractPipeline {
     @Override
     public void setDialect(FileLoadDialect dialect) {
         this.dialect = dialect;
-    }
-
-    @Override
-    public String getDatasetName() {
-        return this.datasetName;
     }
 
     @Override
@@ -306,11 +291,14 @@ public class Pipeline implements AbstractPipeline {
     }
 
     @Override
+    public void updateMetadataRepository(Collection<Metadata> coming) {
+        metadataRepository.updateMetadata(coming);
+    }
+
+    @Override
     public void updateTargetMetadata(Collection<Metadata> coming) {
         coming.stream().forEach(metadata -> {
-            if (targetMetadata.contains(metadata)) {
-                targetMetadata.remove(metadata);
-            }
+            targetMetadata.remove(metadata);
             targetMetadata.add(metadata);
         });
     }

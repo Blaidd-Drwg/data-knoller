@@ -1,10 +1,10 @@
 package de.hpi.isg.dataprep.preparators;
 
 import de.hpi.isg.dataprep.DialectBuilder;
+import de.hpi.isg.dataprep.ExecutionContext;
 import de.hpi.isg.dataprep.components.Pipeline;
 import de.hpi.isg.dataprep.components.Preparation;
 import de.hpi.isg.dataprep.exceptions.ParameterNotSpecifiedException;
-import de.hpi.isg.dataprep.exceptions.PreparationHasErrorException;
 import de.hpi.isg.dataprep.load.FlatFileDataLoader;
 import de.hpi.isg.dataprep.load.SparkDataLoader;
 import de.hpi.isg.dataprep.model.dialects.FileLoadDialect;
@@ -15,10 +15,7 @@ import de.hpi.isg.dataprep.preparators.define.ChangeFilesEncoding;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.functions;
-import org.junit.After;
-import org.junit.Assert;
-import org.junit.BeforeClass;
-import org.junit.Test;
+import org.junit.*;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -99,7 +96,7 @@ public class ChangeFilesEncodingTest extends PreparatorTest {
 //        Metadata fakeMetadata = new FileEncoding(PROPERTY_NAME, "ASCII");
 //        ChangeEncoding preparator = new MockChangeEncoding(PROPERTY_NAME, NEW_ENCODING, fakeMetadata);
 //        executePreparator(preparator);
-//        assertErrorCount((int) pipeline.getRawData().count());
+//        assertErrorCount((int) pipeline.getDataset().count());
 //    }
 
 
@@ -107,14 +104,14 @@ public class ChangeFilesEncodingTest extends PreparatorTest {
 
     @Test
     public void testFileNotFound() throws Exception {
-        Dataset<Row> oldData = pipeline.getRawData();
+        Dataset<Row> oldData = pipeline.getDataset();
         Dataset<Row> newData = oldData.withColumn(PROPERTY_NAME, functions.lit("not a real path"));
-        pipeline.setRawData(newData);
+        pipeline.setDataset(newData);
 
         ChangeFilesEncoding preparator = new ChangeFilesEncoding(PROPERTY_NAME, OLD_ENCODING, NEW_ENCODING);
         executePreparator(preparator);
         assertErrorCount((int) newData.count());
-        pipeline.setRawData(oldData);  // restore actual paths so cleanUp doesn't complain
+        pipeline.setDataset(oldData);  // restore actual paths so cleanUp doesn't complain
     }
 
     @Test
@@ -122,7 +119,7 @@ public class ChangeFilesEncodingTest extends PreparatorTest {
         String oldEncoding = "ASCII";
         ChangeFilesEncoding preparator = new ChangeFilesEncoding(PROPERTY_NAME, oldEncoding, NEW_ENCODING);
         executePreparator(preparator);
-        assertErrorCount((int) pipeline.getRawData().count());
+        assertErrorCount((int) pipeline.getDataset().count());
     }
 
     @Test
@@ -130,7 +127,7 @@ public class ChangeFilesEncodingTest extends PreparatorTest {
         String newEncoding = "ASCII";
         ChangeFilesEncoding preparator = new ChangeFilesEncoding(PROPERTY_NAME, OLD_ENCODING, newEncoding);
         executePreparator(preparator);
-        assertErrorCount((int) pipeline.getRawData().count());
+        assertErrorCount((int) pipeline.getDataset().count());
     }
 
 
@@ -162,7 +159,7 @@ public class ChangeFilesEncodingTest extends PreparatorTest {
         executePreparator(preparator);
     }
 
-    @Test(expected = PreparationHasErrorException.class)
+    @Test(expected = RuntimeException.class)
     public void testInvalidProperty() throws Exception {
         ChangeFilesEncoding preparator = new ChangeFilesEncoding("fake property", NEW_ENCODING);
         executePreparator(preparator);
@@ -199,7 +196,7 @@ public class ChangeFilesEncodingTest extends PreparatorTest {
     }
 
     private static String[] getPaths() {
-        return pipeline.getRawData()
+        return pipeline.getDataset()
                 .select(PROPERTY_NAME)
                 .collectAsList()
                 .stream()
@@ -217,9 +214,9 @@ public class ChangeFilesEncodingTest extends PreparatorTest {
         }
 
         @Override
-        public void execute() throws Exception {
+        public ExecutionContext execute(Dataset<Row> dataset) throws Exception {
             this.getPreparation().getPipeline().getMetadataRepository().updateMetadata(fakeMetadata);
-            super.execute();
+            return super.execute(dataset);
         }
     }
 }

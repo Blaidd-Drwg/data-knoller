@@ -32,7 +32,7 @@ public class PipelineTest extends PreparatorTest {
 
 //    @Test
 //    public void testPipelineOnRestaurants() throws Exception {
-//        pipeline.getRawData().show();
+//        pipeline.getDataset().show();
 //
 //        AbstractPreparator prep1 = new ReplaceSubstring("phone", "/", "-");
 //        AbstractPreparation preparation1 = new Preparation(prep1);
@@ -60,13 +60,11 @@ public class PipelineTest extends PreparatorTest {
 //
 //        pipeline.executePipeline();
 //
-//        pipeline.getRawData().show();
+//        pipeline.getDataset().show();
 //    }
 
     @Test
     public void testPipelineOnPokemon() throws Exception {
-        pipeline.getRawData().show();
-        pipeline.getRawData().printSchema();
 
         AbstractPreparator prep1 = new ReplaceSubstring("identifier", "[(\\s)+]", "");
         AbstractPreparation preparation1 = new Preparation(prep1);
@@ -77,8 +75,6 @@ public class PipelineTest extends PreparatorTest {
         pipeline.addPreparation(preparation2);
 
         pipeline.executePipeline();
-
-        pipeline.getRawData().show();
     }
 
     @Test
@@ -107,7 +103,7 @@ public class PipelineTest extends PreparatorTest {
 
         Assert.assertEquals(trueErrorRepository, pipeline.getErrorRepository());
 
-        Dataset<Row> updated = pipeline.getRawData();
+        Dataset<Row> updated = pipeline.getDataset();
         StructType updatedSchema = updated.schema();
 
         StructType trueSchema = new StructType(new StructField[]{
@@ -166,7 +162,7 @@ public class PipelineTest extends PreparatorTest {
 
         Assert.assertEquals(trueErrorRepository, pipeline.getErrorRepository());
 
-        Dataset<Row> updated = pipeline.getRawData();
+        Dataset<Row> updated = pipeline.getDataset();
         StructType updatedSchema = updated.schema();
 
         StructType trueSchema = new StructType(new StructField[]{

@@ -1,7 +1,6 @@
 package de.hpi.isg.dataprep.components;
 
 import de.hpi.isg.dataprep.ExecutionContext;
-import de.hpi.isg.dataprep.exceptions.PreparationHasErrorException;
 import de.hpi.isg.dataprep.model.error.PreparationError;
 import de.hpi.isg.dataprep.model.target.system.AbstractPreparator
         ;
@@ -43,22 +42,12 @@ abstract public class AbstractPreparatorImpl {
     }
 
     private final Dataset<Row> getDataSet(AbstractPreparator preparator) {
-        return preparator.getPreparation().getPipeline().getRawData();
+        return preparator.getPreparation().getPipeline().getDataset();
     }
 
-    public final void execute(AbstractPreparator preparator) throws Exception {
+    public final ExecutionContext execute(AbstractPreparator preparator, Dataset<Row> dataset) throws Exception {
         // getDataset
-        Dataset<Row> dataset = this.getDataSet(preparator);
-
-        ExecutionContext executionContext = executePreparator(preparator, dataset);
-
-        preparator.getPreparation().setExecutionContext(executionContext);
-        preparator.setUpdatedTable(executionContext.newDataFrame());
-
-        // throw the runtime errors to the preparator. The preparator is due to record the errors.
-        if (executionContext.hasError()) {
-            throw new PreparationHasErrorException("This preparation causes errors for some records.");
-        }
+        return executePreparator(preparator, dataset);
     }
 
     public final <T> T getPreparatorInstance(AbstractPreparator preparator, Class<T> concretePreparatorClass) throws ClassCastException {

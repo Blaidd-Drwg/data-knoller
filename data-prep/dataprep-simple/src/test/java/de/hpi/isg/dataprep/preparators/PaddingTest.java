@@ -37,8 +37,6 @@ public class PaddingTest extends PreparatorTest {
 //        trueErrorlogs.add(pipelineError1);
         ErrorRepository trueErrorRepository = new ErrorRepository(trueErrorlogs);
 
-        pipeline.getRawData().show();
-
         Assert.assertEquals(trueErrorRepository, pipeline.getErrorRepository());
     }
 
@@ -64,9 +62,7 @@ public class PaddingTest extends PreparatorTest {
 
         ErrorRepository trueErrorRepository = new ErrorRepository(trueErrorlogs);
 
-        pipeline.getRawData().show();
-
         Assert.assertEquals(trueErrorRepository, pipeline.getErrorRepository());
-        Assert.assertEquals(pipeline.getRawData().count(), 9L);
+        Assert.assertEquals(pipeline.getDataset().count(), 9L);
     }
 }

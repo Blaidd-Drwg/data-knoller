@@ -5,6 +5,8 @@ import java.util.Iterator;
 import java.util.List;
 
 /**
+ * Iterator over all the subsets of a given set.
+ *
  * @author lan.jiang
  * @since 1/20/19
  */
@@ -35,13 +37,9 @@ public class SubsetIterator<T> implements Iterator<List<T>> {
 
     @Override
     public boolean hasNext() {
-        if (count == maxCount) {
-            return false;
-        }
-//        if (Integer.bitCount(count)>elements.size()) {
+        return count != maxCount;//        if (Integer.bitCount(count)>elements.size()) {
 //            return false;
 //        }
-        return true;
     }
 
     @Override
